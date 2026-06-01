@@ -6,7 +6,9 @@ import typer
 from sqlalchemy import func, select
 
 from photonfeed.db import Base, Paper, SessionLocal, engine
+from photonfeed.embed import embed_documents
 from photonfeed.ingest import discover_all, extract_text
+from photonfeed.profile import build_profile
 
 app = typer.Typer(
     name="photonfeed",
@@ -110,18 +112,105 @@ def seed(
 
 @app.command("papers-status")
 def papers_status() -> None:
-    """Show counts of ingested papers by source."""
+    """Show counts of ingested papers by source (and how many are embedded)."""
+
+    async def _run() -> None:
+        async with SessionLocal() as session:
+            total_q = select(Paper.source, func.count(Paper.id)).group_by(Paper.source)
+            embed_q = (
+                select(Paper.source, func.count(Paper.id))
+                .where(Paper.embedding.is_not(None))
+                .group_by(Paper.source)
+            )
+            total_rows = (await session.execute(total_q)).all()
+            embed_rows = dict((await session.execute(embed_q)).all())
+
+            total = sum(n for _, n in total_rows)
+            embedded = sum(embed_rows.values())
+            typer.echo(f"Total papers: {total} ({embedded} embedded)")
+            for source, n in sorted(total_rows):
+                e = embed_rows.get(source, 0)
+                typer.echo(f"  {source:>12}: {n:>4} ({e:>4} embedded)")
+
+    asyncio.run(_run())
+
+
+@app.command()
+def embed(
+    batch_size: Annotated[
+        int, typer.Option(help="Voyage batch size (max 128)")
+    ] = 64,
+) -> None:
+    """Embed all papers that don't yet have an embedding (idempotent)."""
 
     async def _run() -> None:
         async with SessionLocal() as session:
             result = await session.execute(
-                select(Paper.source, func.count(Paper.id)).group_by(Paper.source)
+                select(Paper.id, Paper.full_text).where(
+                    Paper.embedding.is_(None), Paper.full_text.is_not(None)
+                )
             )
             rows = result.all()
-            total = sum(n for _, n in rows)
-            typer.echo(f"Total papers: {total}")
-            for source, n in sorted(rows):
-                typer.echo(f"  {source:>12}: {n}")
+            if not rows:
+                typer.echo("Nothing to embed — all papers already have embeddings.")
+                return
+
+            typer.echo(f"Embedding {len(rows)} papers in batches of {batch_size}...")
+            n_done = 0
+            for start in range(0, len(rows), batch_size):
+                batch = rows[start : start + batch_size]
+                texts = [r.full_text or "" for r in batch]
+                vectors = embed_documents(texts)
+                for r, vec in zip(batch, vectors, strict=True):
+                    paper = await session.get(Paper, r.id)
+                    if paper is not None:
+                        paper.embedding = vec
+                await session.commit()
+                n_done += len(batch)
+                typer.echo(f"  {n_done}/{len(rows)} embedded")
+            typer.echo(f"Done. {n_done} papers embedded.")
+
+    asyncio.run(_run())
+
+
+profile_app = typer.Typer(help="Build & inspect the user taste profile.")
+app.add_typer(profile_app, name="profile")
+
+
+@profile_app.command("build")
+def profile_build() -> None:
+    """Compute weighted-centroid taste profile from embedded papers."""
+
+    async def _run() -> None:
+        async with SessionLocal() as session:
+            result = await build_profile(session)
+        typer.echo(f"Profile built from {result.paper_count} papers.")
+        typer.echo(f"Total weight: {result.weight_sum:.1f}")
+        typer.echo("Sources:")
+        for src, n in sorted(result.per_source.items()):
+            typer.echo(f"  {src:>12}: {n}")
+        typer.echo("\nTop papers by similarity to profile (sanity check):")
+        for path, sim, src in result.top_papers:
+            short = path.rsplit("/", 1)[-1][:80]
+            typer.echo(f"  {sim:.3f}  [{src:>9}]  {short}")
+
+    asyncio.run(_run())
+
+
+@profile_app.command("show")
+def profile_show() -> None:
+    """Print the current persisted profile stats."""
+    from photonfeed.db import Profile
+
+    async def _run() -> None:
+        async with SessionLocal() as session:
+            p = await session.get(Profile, 1)
+            if p is None:
+                typer.echo("No profile yet — run `photonfeed profile build`.")
+                return
+            typer.echo(f"Profile id={p.id}, updated_at={p.updated_at.isoformat()}")
+            typer.echo(f"Papers: {p.paper_count}, weight sum: {p.weight_sum:.1f}")
+            typer.echo(f"Stats: {p.stats}")
 
     asyncio.run(_run())
 

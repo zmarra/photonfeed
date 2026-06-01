@@ -1,10 +1,10 @@
 import uuid
 from datetime import datetime
-from typing import Final
+from typing import Any, Final
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import DateTime, Float, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -48,4 +48,25 @@ class Paper(Base):
 
     ingested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Profile(Base):
+    """Single-row table holding the user's weighted-centroid taste vector.
+
+    Refactored into a per-user table when we go multi-tenant in v0.2.
+    """
+
+    __tablename__ = "profile"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
+    paper_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    weight_sum: Mapped[float] = mapped_column(Float, nullable=False)
+    stats: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )

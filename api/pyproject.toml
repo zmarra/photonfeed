@@ -18,6 +18,7 @@ dependencies = [
     "pypdf>=6.12.2",
     "sqlalchemy>=2.0",
     "typer>=0.26.4",
+    "voyageai>=0.3.7",
 ]
 
 [project.scripts]
