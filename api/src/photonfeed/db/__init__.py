@@ -5,6 +5,7 @@ from photonfeed.db.models import (
     SOURCE_OWN,
     SOURCE_WEIGHTS,
     Base,
+    Candidate,
     Paper,
     Profile,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "SOURCE_OWN",
     "SOURCE_WEIGHTS",
     "Base",
+    "Candidate",
     "Paper",
     "Profile",
     "SessionLocal",

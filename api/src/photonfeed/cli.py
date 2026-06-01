@@ -5,10 +5,12 @@ from typing import Annotated
 import typer
 from sqlalchemy import func, select
 
-from photonfeed.db import Base, Paper, SessionLocal, engine
+from photonfeed.db import Base, Candidate, Paper, SessionLocal, engine
 from photonfeed.embed import embed_documents
 from photonfeed.ingest import discover_all, extract_text
 from photonfeed.profile import build_profile
+from photonfeed.sources import DEFAULT_CATEGORIES, fetch_recent
+from photonfeed.sources.arxiv import ArxivFetchError
 
 app = typer.Typer(
     name="photonfeed",
@@ -169,6 +171,65 @@ def embed(
                 n_done += len(batch)
                 typer.echo(f"  {n_done}/{len(rows)} embedded")
             typer.echo(f"Done. {n_done} papers embedded.")
+
+    asyncio.run(_run())
+
+
+@app.command("fetch-arxiv")
+def fetch_arxiv(
+    max_results: Annotated[
+        int, typer.Option(help="Max papers to pull from arXiv")
+    ] = 200,
+    days: Annotated[
+        int | None, typer.Option(help="Only keep papers published in the last N days")
+    ] = None,
+) -> None:
+    """Fetch recent arXiv papers in the user's fields into the candidates table.
+
+    Idempotent: candidates already present (matched by external_id) are skipped.
+    """
+
+    async def _run() -> None:
+        typer.echo(
+            f"Fetching up to {max_results} from arXiv "
+            f"({', '.join(DEFAULT_CATEGORIES)})..."
+        )
+        try:
+            papers = fetch_recent(max_results=max_results, since_days=days)
+        except ArxivFetchError as e:
+            typer.secho(str(e), fg=typer.colors.YELLOW, err=True)
+            raise typer.Exit(code=1) from e
+        typer.echo(f"arXiv returned {len(papers)} papers.")
+
+        n_inserted = 0
+        n_skipped = 0
+        async with SessionLocal() as session:
+            for p in papers:
+                existing = await session.execute(
+                    select(Candidate.id).where(Candidate.external_id == p.external_id)
+                )
+                if existing.scalar_one_or_none() is not None:
+                    n_skipped += 1
+                    continue
+                session.add(
+                    Candidate(
+                        source="arxiv",
+                        external_id=p.external_id,
+                        version=p.version,
+                        title=p.title,
+                        abstract=p.abstract,
+                        authors=p.authors,
+                        categories=p.categories,
+                        primary_category=p.primary_category,
+                        published_at=p.published_at,
+                        abs_url=p.abs_url,
+                        pdf_url=p.pdf_url,
+                    )
+                )
+                n_inserted += 1
+            await session.commit()
+
+        typer.echo(f"Inserted: {n_inserted}, Skipped (already present): {n_skipped}")
 
     asyncio.run(_run())
 

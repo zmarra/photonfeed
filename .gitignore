@@ -51,3 +51,6 @@ data/
 *.sqlite
 *.db
 pg-data/
+
+# ship-feature pipeline scratch space (transient handoff files)
+.pipeline/

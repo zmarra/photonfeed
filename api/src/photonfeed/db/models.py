@@ -51,6 +51,46 @@ class Paper(Base):
     )
 
 
+class Candidate(Base):
+    """A paper fetched from a daily source (arXiv etc.), pending triage.
+
+    Kept separate from `papers` (the user's library): candidates are the
+    incoming stream we score against the profile, not taste signal.
+    """
+
+    __tablename__ = "candidates"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="arxiv")
+    external_id: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False, index=True
+    )
+    version: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    abstract: Mapped[str] = mapped_column(Text, nullable=False)
+    authors: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    categories: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    primary_category: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    abs_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(EMBEDDING_DIM), nullable=True
+    )
+    triage_score: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class Profile(Base):
     """Single-row table holding the user's weighted-centroid taste vector.
 
