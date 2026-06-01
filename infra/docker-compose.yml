@@ -1,0 +1,40 @@
+name: photonfeed
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: photonfeed-postgres
+    environment:
+      POSTGRES_USER: photonfeed
+      POSTGRES_PASSWORD: photonfeed
+      POSTGRES_DB: photonfeed
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U photonfeed -d photonfeed"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  grobid:
+    image: grobid/grobid:0.8.1
+    container_name: photonfeed-grobid
+    ports:
+      - "8070:8070"
+    environment:
+      JAVA_OPTS: "-Xmx4g"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8070/api/isalive || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    restart: unless-stopped
+
+volumes:
+  pg-data:
+    name: photonfeed-pg-data
